@@ -527,7 +527,7 @@ def main(argv=None):
     parser.add_argument("--test", help="Official COCO test annotation JSON")
     parser.add_argument("--near-threshold", type=int, default=4, help="dHash Hamming distance for near duplicates (default: 4)")
     args = parser.parse_args(argv)
-    split_annotations = {name: getattr(args, name) for name in SPLIT_NAMES}
+    split_annotations = {name: getattr(args, name) for name in SPLIT_NAMES if getattr(args, name) is not None}
     try:
         summary = import_dataset(args.input, args.output, args.source_name,
                                  args.source_url, args.license_name, args.annotation_license,

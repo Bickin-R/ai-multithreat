@@ -41,8 +41,6 @@ def _launch(data_root, split):
 
     root=Path(data_root).resolve(); image_dir=root/"images"; output=root/f"{split}.jsonl"
     if not image_dir.is_dir(): raise FileNotFoundError(f"Image folder not found: {image_dir}")
-    files=sorted((p for p in image_dir.rglob("*") if p.is_file() and p.suffix.lower() in IMAGE_SUFFIXES),key=lambda p:p.as_posix().lower())
-    if not files: raise FileNotFoundError(f"No JPG/PNG images found under {image_dir}")
     records={}
     if output.exists():
         for line_no,line in enumerate(output.read_text(encoding="utf-8").splitlines(),1):
@@ -61,6 +59,10 @@ def _launch(data_root, split):
     tk.Checkbutton(controls,text="Reviewed: this image contains no people",variable=reviewed).pack(side="left")
 
     def relpath(path): return path.relative_to(root).as_posix()
+
+    allowed_images=set(records)
+    files=sorted((p for p in image_dir.rglob("*") if p.is_file() and p.suffix.lower() in IMAGE_SUFFIXES and relpath(p) in allowed_images),key=lambda p:p.as_posix().lower())
+    if not files: raise FileNotFoundError(f"No images from {split}.jsonl found under {image_dir}")
 
     def render_boxes():
         nonlocal rectangle
@@ -114,8 +116,10 @@ def _launch(data_root, split):
         if not boxes and not reviewed.get():
             messagebox.showwarning("Review empty image","Draw person boxes, or check the reviewed-empty box before saving.",parent=window)
             return False
-        try: records[rel]=preserve_record_metadata(
-            person_record(rel,boxes,*image_size), records.get(rel))
+        try:
+            records[rel]=preserve_record_metadata(
+                person_record(rel,boxes,*image_size), records.get(rel))
+            records[rel]["reviewed"] = True
         except ValueError as exc:
             messagebox.showerror("Invalid box",str(exc),parent=window); return False
         tmp=output.with_suffix(output.suffix+".tmp")
