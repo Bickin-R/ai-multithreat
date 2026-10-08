@@ -1,0 +1,51 @@
+# Python caches and test/type-check artifacts
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# Local environments and vendored environment packages
+.venv/
+venv/
+env/
+.venv_pkgs/
+
+# Model artifacts and logs
+checkpoints/
+*.pt
+*.pth
+*.onnx
+*.log
+
+# Local data, labels, captures, and media are never repository content.
+data/**
+!data/**/
+!data/**/.gitkeep
+*.jpg
+*.jpeg
+*.png
+*.mp4
+*.avi
+*.mov
+*.webm
+*.bmp
+*.tif
+*.tiff
+*.webp
+
+# Local secrets and credentials
+.env
+.env.*
+.aws/
+*.pem
+*.key
+*.p12
+*.pfx
+id_rsa*
+id_ed25519*
+
+# Workspace-specific Codex/agent state
+.codex/
+.agents/
