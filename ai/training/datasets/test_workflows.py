@@ -133,7 +133,7 @@ class DatasetWorkflowTests(unittest.TestCase):
         self.assertEqual(updated["source_name"],"fixture")
         self.assertEqual(updated["source_group"],"fixture:train:group-1")
         self.assertEqual(updated["license"],"CC BY")
-        self.assertIs(updated["reviewed"],False)
+        self.assertIs(updated["reviewed"],True)
 
     def test_capture_names_are_unique_and_session_safe(self):
         captures=self.root/"captures"; captures.mkdir()

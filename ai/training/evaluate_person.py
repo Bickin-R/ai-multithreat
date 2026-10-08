@@ -7,10 +7,11 @@ from PIL import Image
 
 from ai.device import resolve_device
 from ai.inference.common import decode_grid
-from ai.models import PersonDetectorModel
+from ai.models import LegacyPersonDetector20, PersonDetectorModel
 from ai.training.datasets import DetectionDataset, PERSON_CLASSES
 from ai.training.datasets.formats import load_rgb
 from ai.training.train_utils import load_model_checkpoint
+from ai.inference.legacy_person_inference import load_legacy_person_checkpoint
 
 
 def box_iou(first, second):
@@ -118,9 +119,9 @@ def evaluate_predictions(predictions, ground_truth, confidence_threshold=0.5):
             "ap_by_iou_person": aps}
 
 
-def run_evaluation(data_root="data/person", checkpoint="checkpoints/person.pt",
+def run_evaluation(data_root="data/person", checkpoint="checkpoints/person_augmented.pt",
                    device="cuda" if torch.cuda.is_available() else "cpu",
-                   confidence_threshold=0.5):
+                   confidence_threshold=0.5, architecture="legacy20"):
     """Evaluate only the supplied root's test.jsonl. No training data is opened."""
     root = Path(data_root)
     manifest = root / "test.jsonl"
@@ -128,7 +129,12 @@ def run_evaluation(data_root="data/person", checkpoint="checkpoints/person.pt",
         raise FileNotFoundError(f"Person checkpoint not found: {checkpoint}")
     dataset = DetectionDataset(root, manifest, PERSON_CLASSES)
     device = resolve_device(device)
-    model = load_model_checkpoint(PersonDetectorModel(), checkpoint, device)
+    if architecture == "legacy20":
+        model = load_legacy_person_checkpoint(LegacyPersonDetector20(), checkpoint, device)
+    elif architecture == "current40":
+        model = load_model_checkpoint(PersonDetectorModel(), checkpoint, device)
+    else:
+        raise ValueError("architecture must be 'legacy20' or 'current40'")
     model.eval()
 
     predictions, ground_truth = [], []
@@ -148,15 +154,18 @@ def run_evaluation(data_root="data/person", checkpoint="checkpoints/person.pt",
 def main(argv=None):
     parser = argparse.ArgumentParser(description="Evaluate the custom Person CNN on data/person/test.jsonl only.")
     parser.add_argument("--data", default="data/person", help="Person dataset root; only test.jsonl is loaded")
-    parser.add_argument("--checkpoint", default="checkpoints/person.pt")
+    parser.add_argument("--checkpoint", default="checkpoints/person_augmented.pt")
     parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
+    parser.add_argument("--architecture", choices=("legacy20", "current40"), default="legacy20",
+                        help="Explicit model architecture; default matches person_augmented.pt")
     parser.add_argument("--confidence", type=float, default=0.5,
                         help="Confidence threshold for precision/recall counts; AP ranks all decoded predictions")
     args = parser.parse_args(argv)
     if not 0.0 <= args.confidence <= 1.0:
         parser.error("--confidence must be between 0 and 1")
     try:
-        report = run_evaluation(args.data, args.checkpoint, args.device, args.confidence)
+        report = run_evaluation(args.data, args.checkpoint, args.device, args.confidence,
+                                args.architecture)
     except (FileNotFoundError, ValueError, RuntimeError) as exc:
         parser.exit(2, f"Evaluation failed: {exc}\n")
     for key, value in report.items():

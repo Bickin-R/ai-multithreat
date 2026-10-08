@@ -2,22 +2,28 @@
 
 This project defines its own compact PyTorch models and does not use YOLO or
 Ultralytics. Models initialize from random weights. Training is a separate
-command and never runs when the camera pipeline starts. **Model architecture
-implemented, but trained inference has not yet been validated.** No dataset or
-trained checkpoints are currently included, so pipeline model statuses are
-unavailable until you train and supply weights.
+command and never runs when the camera pipeline starts. Person detection uses
+the custom two-slot-per-cell CNN. Its current training architecture emits a
+40x40 grid; the explicit legacy20 inference path loads the earlier
+20x20 `person_augmented.pt` checkpoint without allowing current40 to silently
+accept it.
 
 ## Architecture and status
 
-The person and weapon models use a compact stride-16 CNN with a grid prediction
-head (objectness, normalized box, and class logits). Person has one class;
+The Person model is a custom CNN with two person slots per grid cell,
+objectness, and normalized boxes. Current training uses stride 8 and a 40x40
+grid; the inference-only legacy20 model preserves the earlier stride-16,
+20x20 checkpoint structure. The weapon model uses a compact stride-16 CNN
+with a grid prediction head (objectness, normalized box, and class logits).
+Person has one class;
 weapon classes are `knife`, `gun`, `arivaal`, `baseball_bat`, and `other_weapon`. Fire is a custom binary
 image classifier with `normal` and `fire`. Violence is a custom binary clip
 classifier with `normal` and `violence`; it extracts per-frame features and
-passes the ordered feature sequence through a GRU. These are starter trainable architectures, not
-validated detectors/classifiers. Detection training currently assigns one
-object per grid cell and rejects annotations that collide in a cell. Accuracy,
-speed, and thresholds require evaluation and tuning on representative data.
+passes the ordered feature sequence through a GRU. The legacy20 Person model
+has been evaluated on the held-out test set; its current baseline AP50 is
+6.42% at the recorded evaluation settings, so performance remains limited.
+Person training assigns up to two objects per grid cell and rejects a third
+collision. Other models require their own evaluation on representative data.
 For a 320x320 input, the weapon output is `[B,10,20,20]`: objectness, four box
 channels, and five class logits. Inference returns `class_id`, `class_name`,
 `bbox`, and `confidence`. Existing three-class weapon checkpoints are rejected;
@@ -306,14 +312,21 @@ person GUI writes class-0 boxes directly; alternatively use a local COCO
 annotation export and the converter documented above. Keep each capture session
 entirely in one of train, validation, or test before annotating; a recommended
 starting split is 70/15/15. Then validate and inspect statistics with the
-commands above. No images are captured unless you run the capture command and
-press Space.
+commands above. The separate automatic capture tool uses quality filters and a
+configurable interval; captured frames remain unlabeled until reviewed.
 
 For all tasks, split at the source video/person/session level where possible.
 Include varied lighting, viewpoints, distances, occlusions, and representative
-negative examples. Review labels before training. Expected checkpoint defaults
-are `checkpoints/person.pt`, `checkpoints/weapon.pt`, `checkpoints/fire.pt`,
-and `checkpoints/violence.pt` relative to the working directory.
+negative examples. Review labels before training. New Person training defaults
+to `checkpoints/person_stride8_grid40.pt`; it does not overwrite the selected
+legacy20 baseline `checkpoints/person_augmented.pt`.
+
+Checkpoints and datasets are git-ignored local artifacts. The current best
+Person checkpoint, `checkpoints/person_augmented.pt`, must be supplied and
+preserved in the local `checkpoints/` directory or maintained in the team's
+approved artifact backup; it is intentionally not committed with source. Do
+not assume a fresh clone contains it. Use `legacy20` for that checkpoint and
+`current40` only for checkpoints saved by the current training architecture.
 
 ## Install and train
 
@@ -324,7 +337,7 @@ validation-loss state dict. Training does not use or fetch pretrained weights.
 
 ```bash
 python3 -m pip install -r requirements-ai.txt
-python3 -m ai.training.train_person --data data/person --checkpoint checkpoints/person.pt --epochs 20
+python3 -m ai.training.train_person --data data/person --checkpoint checkpoints/person_stride8_grid40.pt --epochs 20
 python3 -m ai.training.train_weapon --data data/weapon --checkpoint checkpoints/weapon.pt --epochs 20
 python3 -m ai.training.train_fire --data data/fire --checkpoint checkpoints/fire.pt --epochs 20
 python3 -m ai.training.train_violence --data data/violence --checkpoint checkpoints/violence.pt --epochs 20
@@ -334,7 +347,7 @@ Validate a saved checkpoint on the validation manifest with the same command
 and `--validate-only`:
 
 ```bash
-python3 -m ai.training.train_person --data data/person --checkpoint checkpoints/person.pt --validate-only
+python3 -m ai.training.train_person --data data/person --checkpoint checkpoints/person_stride8_grid40.pt --validate-only
 ```
 
 Run `python3 -m ai.training.smoke_test` to check model shapes, dataset rejection
@@ -345,6 +358,12 @@ are removed when the command exits.
 Change `train_person` to another task's module and use that task's data and
 checkpoint path. Keep the held-out test split untouched for final evaluation;
 the starter CLI does not evaluate test sets.
+
+Evaluate the held-out test manifest with the preserved legacy20 baseline:
+
+```bash
+python3 -m ai.training.evaluate_person --data data/person --checkpoint checkpoints/person_augmented.pt --architecture legacy20
+```
 
 ## Inference and pipeline integration
 

@@ -34,12 +34,16 @@ def record_provenance_errors(row, manifest, manifest_error=None):
     """Return errors for imported person records; local/manual rows are unaffected."""
     if not SOURCE_MARKERS.intersection(row):
         return []
+    errors = []
+    if row.get("reviewed") is not True:
+        errors.append("imported person annotations require reviewed=true before use")
     if manifest is None:
-        return [manifest_error or "missing source provenance"]
+        errors.append(manifest_error or "missing source provenance")
+        return errors
     missing = [key for key in RECORD_FIELDS if key not in row or row[key] in (None, "")]
     if missing:
-        return [f"record provenance missing fields: {', '.join(missing)}"]
-    errors = []
+        errors.append(f"record provenance missing fields: {', '.join(missing)}")
+        return errors
     if row["source_name"] != manifest["dataset_name"]:
         errors.append("source_name does not match source_manifest.json")
     if row["source_url"] != manifest["dataset_url"]:

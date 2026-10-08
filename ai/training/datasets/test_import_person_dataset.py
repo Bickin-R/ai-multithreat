@@ -93,13 +93,26 @@ class PersonDatasetImporterTests(unittest.TestCase):
         self.assertGreater(counts["train"], counts["val"])
         self.assertGreater(counts["train"], counts["test"])
         groups = {}
+        unreviewed_rows = {}
         for split in ("train", "val", "test"):
-            for line in (self.output / f"{split}.jsonl").read_text().splitlines():
-                row = json.loads(line)
+            manifest_path = self.output / f"{split}.jsonl"
+            rows = [json.loads(line) for line in manifest_path.read_text().splitlines()]
+            unreviewed_rows[split] = rows
+            for row in rows:
                 source_id = int(row["source_id"]) - 1
                 video = source_id // 2
                 groups.setdefault(video, set()).add(split)
         self.assertTrue(all(len(splits) == 1 for splits in groups.values()))
+        with self.assertRaisesRegex(ValueError, "reviewed=true"):
+            validate_dataset_splits(
+                self.output, self.output / "train.jsonl", self.output / "val.jsonl",
+                self.output / "test.jsonl", "detection", PERSON_CLASSES)
+        # Simulate the existing human review workflow in this temporary fixture.
+        for split, rows in unreviewed_rows.items():
+            for row in rows:
+                row["reviewed"] = True
+            (self.output / f"{split}.jsonl").write_text(
+                "".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8")
         self.assertEqual(validate_dataset_splits(
             self.output, self.output / "train.jsonl", self.output / "val.jsonl",
             self.output / "test.jsonl", "detection", PERSON_CLASSES),

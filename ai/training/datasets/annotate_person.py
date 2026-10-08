@@ -28,7 +28,7 @@ def preserve_record_metadata(record, previous):
     """Retain source/license provenance when a reviewed box record is updated."""
     metadata = {key: value for key, value in (previous or {}).items()
                 if key not in {"image", "objects"}}
-    return {**metadata, **record}
+    return {**metadata, **record, "reviewed": True}
 
 
 def _launch(data_root, split):
@@ -81,7 +81,7 @@ def _launch(data_root, split):
         canvas.create_image(0,0,image=photo,anchor="nw")
         row=records.get(rel,{"objects":[]})
         boxes=[list(map(int,obj["bbox"])) for obj in row.get("objects",[])]
-        reviewed.set(not boxes and rel in records)
+        reviewed.set(not boxes and row.get("reviewed") is True)
         status.set(f"{index+1}/{len(files)}  {rel}  ({image.width}x{image.height})  — draw tight boxes around each visible person")
         render_boxes()
 
