@@ -24,6 +24,13 @@ def person_record(relative_image, boxes, width, height):
     return {"image":Path(relative_image).as_posix(),"objects":objects}
 
 
+def preserve_record_metadata(record, previous):
+    """Retain source/license provenance when a reviewed box record is updated."""
+    metadata = {key: value for key, value in (previous or {}).items()
+                if key not in {"image", "objects"}}
+    return {**metadata, **record}
+
+
 def _launch(data_root, split):
     try:
         import tkinter as tk
@@ -107,7 +114,8 @@ def _launch(data_root, split):
         if not boxes and not reviewed.get():
             messagebox.showwarning("Review empty image","Draw person boxes, or check the reviewed-empty box before saving.",parent=window)
             return False
-        try: records[rel]=person_record(rel,boxes,*image_size)
+        try: records[rel]=preserve_record_metadata(
+            person_record(rel,boxes,*image_size), records.get(rel))
         except ValueError as exc:
             messagebox.showerror("Invalid box",str(exc),parent=window); return False
         tmp=output.with_suffix(output.suffix+".tmp")

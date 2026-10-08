@@ -7,6 +7,7 @@ import numpy as np
 import torch
 from PIL import Image, UnidentifiedImageError
 from torch.utils.data import Dataset
+from .source_provenance import read_source_manifest, record_provenance_errors
 
 SIZE = (320, 320)
 PERSON_CLASSES = ["person"]
@@ -33,6 +34,7 @@ def _file_hash(path):
 
 def _records(root, manifest, kind, class_names):
     root, path = Path(root).resolve(), Path(manifest)
+    source_manifest, source_manifest_error = read_source_manifest(root)
     if not path.is_file():
         raise FileNotFoundError(f"Dataset manifest not found: {path}")
     rows = []
@@ -73,6 +75,11 @@ def _records(root, manifest, kind, class_names):
             if not 0 <= row["label"] < len(class_names):
                 raise ValueError(f"{path}:{line_no}: class ID {row['label']} outside 0..{len(class_names)-1}")
         if kind == "detection":
+            if class_names == PERSON_CLASSES:
+                provenance_errors = record_provenance_errors(
+                    row, source_manifest, source_manifest_error)
+                if provenance_errors:
+                    raise ValueError(f"{path}:{line_no}: " + "; ".join(provenance_errors))
             if class_names == WEAPON_CLASSES and row.get("reviewed") is not True:
                 raise ValueError(f"{path}:{line_no}: weapon records require reviewed=true; pending annotations cannot train")
             if "objects" not in row or not isinstance(row["objects"], list):

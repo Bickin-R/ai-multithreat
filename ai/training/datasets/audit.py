@@ -6,6 +6,7 @@ import math
 from pathlib import Path
 import re
 from PIL import Image, UnidentifiedImageError
+from .source_provenance import read_source_manifest, record_provenance_errors
 
 TASKS = {
     "person": ("detection", ["person"]),
@@ -107,6 +108,7 @@ def audit_dataset(data_dir, task=None):
     kind, classes = TASKS[task]
     result = {"task": task, "kind": kind, "classes": classes, "root": str(root),
               "splits": {}, "leakage": [], "totals": {}}
+    source_manifest, source_manifest_error = read_source_manifest(root)
     seen_within = defaultdict(dict)
     seen_hashes = defaultdict(dict)
     sample_metadata = []
@@ -118,6 +120,10 @@ def audit_dataset(data_dir, task=None):
         for line_no, row in parsed_rows:
             location = f"{filename}:{line_no}"
             errors_before = len(report["errors"])
+            if task == "person":
+                for provenance_error in record_provenance_errors(
+                        row, source_manifest, source_manifest_error):
+                    _error(report, f"{location}: {provenance_error}")
             refs = row.get("frames") if kind == "clip" else [row.get("image")]
             if kind == "clip":
                 if not isinstance(refs, list) or len(refs) < 2:

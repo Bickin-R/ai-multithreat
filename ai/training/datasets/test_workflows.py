@@ -11,7 +11,7 @@ from ai.training.datasets.audit import audit_dataset
 from ai.training.datasets.convert import coco_to_jsonl, csv_to_jsonl
 from ai.training.datasets.stats import main as stats_main
 from ai.training.datasets.validate import main as validate_main
-from ai.training.datasets.annotate_person import person_record
+from ai.training.datasets.annotate_person import person_record, preserve_record_metadata
 from ai.training.datasets.capture_person_webcam import _next_filename, _session_name
 
 
@@ -122,6 +122,18 @@ class DatasetWorkflowTests(unittest.TestCase):
             {"class":0,"bbox":[42,30,190,286]},{"class":0,"bbox":[20,40,35,70]}]})
         self.assertEqual(person_record("images/empty.jpg",[],320,300),{"image":"images/empty.jpg","objects":[]})
         with self.assertRaises(ValueError): person_record("images/bad.jpg",[[0,0,321,5]],320,300)
+
+    def test_person_annotation_update_preserves_source_provenance(self):
+        old={"image":"images/source.jpg","objects":[],"source_name":"fixture",
+             "source_group":"fixture:train:group-1","license":"CC BY",
+             "reviewed":False}
+        updated=preserve_record_metadata(
+            person_record("images/source.jpg",[[1,2,20,30]],64,48),old)
+        self.assertEqual(updated["objects"],[{"class":0,"bbox":[1,2,20,30]}])
+        self.assertEqual(updated["source_name"],"fixture")
+        self.assertEqual(updated["source_group"],"fixture:train:group-1")
+        self.assertEqual(updated["license"],"CC BY")
+        self.assertIs(updated["reviewed"],False)
 
     def test_capture_names_are_unique_and_session_safe(self):
         captures=self.root/"captures"; captures.mkdir()
