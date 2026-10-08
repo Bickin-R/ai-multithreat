@@ -9,13 +9,14 @@ class ConvBlock(nn.Sequential):
 
 
 class FrameBackbone(nn.Module):
-    """Compact stride-16 feature extractor, initialized without pretrained weights."""
-    def __init__(self, width: int = 24):
+    """Compact feature extractor, initialized without pretrained weights."""
+    def __init__(self, width: int = 24, block7_stride: int = 2):
         super().__init__()
         self.layers = nn.Sequential(ConvBlock(3, width, 2), ConvBlock(width, width, 1),
                                     ConvBlock(width, width * 2, 2), ConvBlock(width * 2, width * 2, 1),
                                     ConvBlock(width * 2, width * 4, 2), ConvBlock(width * 4, width * 4, 1),
-                                    ConvBlock(width * 4, width * 4, 2), ConvBlock(width * 4, width * 4, 1))
+                                    ConvBlock(width * 4, width * 4, block7_stride),
+                                    ConvBlock(width * 4, width * 4, 1))
         self.out_channels = width * 4
 
     def forward(self, x):

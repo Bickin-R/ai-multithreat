@@ -9,9 +9,13 @@ INPUT_SIZE = [320, 320]
 
 
 def checkpoint_payload(model):
-    return {"format_version": CHECKPOINT_VERSION, "model_name": model.__class__.__name__,
-            "state_dict": model.state_dict(), "class_names": list(getattr(model, "class_names", [])),
-            "input_size": INPUT_SIZE}
+    payload = {"format_version": CHECKPOINT_VERSION, "model_name": model.__class__.__name__,
+               "state_dict": model.state_dict(), "class_names": list(getattr(model, "class_names", [])),
+               "input_size": INPUT_SIZE}
+    if hasattr(model, "architecture_id"):
+        payload["architecture_id"] = model.architecture_id
+        payload["output_grid"] = list(model.output_grid)
+    return payload
 
 
 def load_model_checkpoint(model, checkpoint, device="cpu"):
@@ -31,6 +35,12 @@ def load_model_checkpoint(model, checkpoint, device="cpu"):
         raise ValueError(f"Checkpoint classes {payload.get('class_names')!r} do not match {expected!r}")
     if payload.get("input_size") != INPUT_SIZE:
         raise ValueError(f"Checkpoint input_size must be {INPUT_SIZE}")
+    expected_architecture = getattr(model, "architecture_id", None)
+    if expected_architecture is not None:
+        if payload.get("architecture_id") != expected_architecture:
+            raise ValueError("Checkpoint architecture_id is missing or incompatible with this Person grid architecture")
+        if payload.get("output_grid") != list(model.output_grid):
+            raise ValueError(f"Checkpoint output_grid must be {list(model.output_grid)}")
     model.load_state_dict(payload["state_dict"], strict=True)
     return model.to(device)
 
@@ -86,12 +96,17 @@ def validate_checkpoint(model, val_ds, checkpoint, batch_size=16, device="cpu"):
 
 
 def _make_targets(pred, objects, class_count):
-    """Encode normalized [class,cx,cy,w,h] boxes into one object per output cell."""
+    """Encode boxes into per-cell slots; the one-class Person model has two."""
     batch, channels, gh, gw = pred.shape
-    target = torch.zeros_like(pred); positive = torch.zeros((batch, gh, gw), dtype=torch.bool, device=pred.device)
-    target_classes = torch.zeros((batch, gh, gw), dtype=torch.long, device=pred.device)
+    slots = 2 if class_count == 1 else 1
+    fields = 5 if class_count == 1 else 5 + class_count
+    if channels != slots * fields:
+        raise ValueError(f"expected {slots * fields} prediction channels for {class_count} classes, got {channels}")
+    target = torch.zeros((batch, slots, 5, gh, gw), dtype=pred.dtype, device=pred.device)
+    positive = torch.zeros((batch, slots, gh, gw), dtype=torch.bool, device=pred.device)
+    target_classes = torch.zeros((batch, slots, gh, gw), dtype=torch.long, device=pred.device)
     for b, rows in enumerate(objects):
-        occupied = set()
+        occupied = {}
         for row in rows:
             cls, cx, cy, bw, bh = [float(v) for v in row.tolist()]
             if not cls.is_integer() or not 0 <= int(cls) < class_count:
@@ -99,27 +114,56 @@ def _make_targets(pred, objects, class_count):
             if not (0 <= cx <= 1 and 0 <= cy <= 1 and 0 < bw <= 1 and 0 < bh <= 1):
                 raise ValueError(f"invalid normalized center/size box: {(cx,cy,bw,bh)}")
             ix = min(gw-1, int(cx*gw)); iy = min(gh-1, int(cy*gh))
-            if (iy,ix) in occupied:
-                raise ValueError(f"multiple objects map to grid cell {(iy,ix)}; this model supports one object per cell")
-            occupied.add((iy,ix)); positive[b,iy,ix]=True
-            target[b,0,iy,ix]=1; target[b,1:5,iy,ix]=torch.tensor([cx,cy,bw,bh],device=pred.device)
-            target_classes[b,iy,ix]=int(cls)
+            cell = (iy, ix)
+            slot = occupied.get(cell, 0)
+            if slot >= slots:
+                raise ValueError(f"more than {slots} objects map to grid cell {(iy,ix)}; this model supports {slots} per cell")
+            occupied[cell] = slot + 1
+            positive[b,slot,iy,ix]=True
+            target[b,slot,0,iy,ix]=1
+            target[b,slot,1:5,iy,ix]=torch.tensor([cx,cy,bw,bh],device=pred.device)
+            target_classes[b,slot,iy,ix]=int(cls)
     return target, positive, target_classes
 
 
 def _detection_loss(pred, objects, class_count):
     target, positive, target_classes = _make_targets(pred, objects, class_count)
-    object_loss = torch.nn.functional.binary_cross_entropy_with_logits(pred[:,0], target[:,0])
+    batch, channels, gh, gw = pred.shape
+    slots = 2 if class_count == 1 else 1
+    fields = channels // slots
+    slot_pred = pred.reshape(batch, slots, fields, gh, gw)
+    object_logits = slot_pred[:,:,0]
+    object_target = target[:,:,0]
+    if class_count == 1:
+        object_loss = _balanced_person_objectness_loss(object_logits, object_target)
+    else:
+        object_loss = torch.nn.functional.binary_cross_entropy_with_logits(object_logits, object_target)
     box_loss = pred.sum()*0
     class_loss = pred.sum()*0
     if positive.any():
-        box_pred = pred[:,1:5].sigmoid().permute(0,2,3,1)[positive]
-        box_true = target[:,1:5].permute(0,2,3,1)[positive]
+        box_pred = slot_pred[:,:,1:5].sigmoid().permute(0,1,3,4,2)[positive]
+        box_true = target[:,:,1:5].permute(0,1,3,4,2)[positive]
         box_loss = torch.nn.functional.smooth_l1_loss(box_pred, box_true)
-        if pred.shape[1] > 5:
-            class_logits = pred[:,5:].permute(0,2,3,1)[positive]
+        if class_count > 1:
+            class_logits = slot_pred[:,:,5:].permute(0,1,3,4,2)[positive]
             class_loss = torch.nn.functional.cross_entropy(class_logits, target_classes[positive])
     return object_loss + box_loss + class_loss
+
+
+def _balanced_person_objectness_loss(logits, targets):
+    """Moderately balance Person slots with normalized square-root weighted BCE."""
+    losses = torch.nn.functional.binary_cross_entropy_with_logits(
+        logits, targets, reduction="none")
+    positive = targets > 0.5
+    positive_count = positive.sum()
+    negative_count = positive.numel() - positive_count
+    if positive_count.item() == 0 or negative_count.item() == 0:
+        return losses.mean()
+    positive_weight = torch.sqrt(
+        negative_count.to(dtype=logits.dtype) / positive_count.to(dtype=logits.dtype))
+    weights = torch.where(positive, positive_weight, torch.ones_like(losses))
+    normalizer = negative_count.to(dtype=logits.dtype) + positive_weight * positive_count.to(dtype=logits.dtype)
+    return (losses * weights).sum() / normalizer
 
 
 def train_detector(model, train_ds, val_ds, checkpoint, epochs=10, batch_size=8, lr=1e-3, device="cpu"):

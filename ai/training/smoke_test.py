@@ -37,7 +37,7 @@ def _expect_rejected(call):
 def main():
     torch.manual_seed(7)
     x=torch.zeros((2,3,320,320))
-    assert PersonDetectorModel()(x).shape==(2,5,20,20)
+    assert PersonDetectorModel()(x).shape==(2,10,40,40)
     assert WeaponDetectorModel()(x).shape==(2,10,20,20)
     assert FireClassifier()(x).shape==(2,2)
     assert ViolenceClassifier()(x.unsqueeze(1).repeat(1,2,1,1,1)).shape==(2,2)

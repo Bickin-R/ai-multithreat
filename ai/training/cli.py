@@ -13,9 +13,12 @@ def main(kind):
     parser.add_argument("--data", required=True, help="Dataset root directory")
     parser.add_argument("--train", default="train.jsonl"); parser.add_argument("--val", default="val.jsonl")
     parser.add_argument("--test", default="test.jsonl")
-    parser.add_argument("--checkpoint", default=f"checkpoints/{kind}.pt")
+    default_checkpoint = ("checkpoints/person_stride8_grid40.pt" if kind == "person"
+                          else f"checkpoints/{kind}.pt")
+    parser.add_argument("--checkpoint", default=default_checkpoint)
     parser.add_argument("--epochs", type=int, default=10); parser.add_argument("--batch-size", type=int, default=8)
-    parser.add_argument("--lr", type=float, default=1e-3); parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
+    parser.add_argument("--lr", "--learning-rate", dest="lr", type=float, default=1e-3)
+    parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     parser.add_argument("--validate-only", action="store_true")
     args = parser.parse_args(); root=Path(args.data)
     model_cls = {"person":PersonDetectorModel,"weapon":WeaponDetectorModel,"violence":ViolenceClassifier,"fire":FireClassifier}[kind]
@@ -25,7 +28,8 @@ def main(kind):
     print("validated dataset splits:", validate_dataset_splits(root, root/args.train, root/args.val,
                                                                   root/args.test, dataset_kind, class_names))
     if kind in ("person","weapon"):
-        train=DetectionDataset(root,root/args.train,class_names); val=DetectionDataset(root,root/args.val,class_names)
+        train=DetectionDataset(root,root/args.train,class_names,augment=(kind=="person"))
+        val=DetectionDataset(root,root/args.val,class_names,augment=False)
         if args.validate_only:
             from ai.training.train_utils import _detector_loss
             from ai.training.train_utils import load_model_checkpoint

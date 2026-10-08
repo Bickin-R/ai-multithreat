@@ -2,10 +2,11 @@
 import json
 import hashlib
 import math
+import random
 from pathlib import Path
 import numpy as np
 import torch
-from PIL import Image, UnidentifiedImageError
+from PIL import Image, ImageEnhance, ImageOps, UnidentifiedImageError
 from torch.utils.data import Dataset
 from .source_provenance import read_source_manifest, record_provenance_errors
 
@@ -19,9 +20,13 @@ VIOLENCE_CLASSES = ["normal", "violence"]
 def load_rgb(path):
     try:
         with Image.open(path) as image:
-            array = np.asarray(image.convert("RGB").resize(SIZE), dtype=np.float32) / 255.0
+            return _image_to_tensor(image.convert("RGB"))
     except (OSError, UnidentifiedImageError) as exc:
         raise ValueError(f"Cannot read RGB image {path}: {exc}") from exc
+
+
+def _image_to_tensor(image):
+    array = np.asarray(image.resize(SIZE), dtype=np.float32) / 255.0
     return torch.from_numpy(array.copy()).permute(2, 0, 1)
 
 
@@ -156,18 +161,29 @@ class ImageClassificationDataset(Dataset):
 
 
 class DetectionDataset(Dataset):
-    """XYXY pixel boxes become [class, cx, cy, width, height] normalized to 0..1."""
-    def __init__(self, root, manifest, class_names=PERSON_CLASSES):
+    """XYXY pixel boxes become normalized boxes; augmentation is opt-in."""
+    def __init__(self, root, manifest, class_names=PERSON_CLASSES, augment=False):
         self.root = Path(root); self.rows = _records(root, manifest, "detection", class_names)
+        self.augment = bool(augment)
     def __len__(self): return len(self.rows)
     def __getitem__(self, index):
         row = self.rows[index]
-        with Image.open(self.root / row["image"]) as image: w, h = image.size
+        with Image.open(self.root / row["image"]) as source:
+            width, height = source.size
+            image = source.convert("RGB").resize(SIZE)
         objects = []
         for obj in row["objects"]:
             x1,y1,x2,y2 = map(float,obj["bbox"])
-            objects.append([obj["class"],(x1+x2)/(2*w),(y1+y2)/(2*h),(x2-x1)/w,(y2-y1)/h])
-        return load_rgb(self.root / row["image"]), torch.tensor(objects,dtype=torch.float32).reshape(-1,5)
+            objects.append([obj["class"],(x1+x2)/(2*width),(y1+y2)/(2*height),
+                            (x2-x1)/width,(y2-y1)/height])
+        if self.augment:
+            if random.random() < 0.5:
+                image = ImageOps.mirror(image)
+                for obj in objects:
+                    obj[1] = 1.0 - obj[1]
+            image = ImageEnhance.Brightness(image).enhance(random.uniform(0.9, 1.1))
+            image = ImageEnhance.Contrast(image).enhance(random.uniform(0.9, 1.1))
+        return _image_to_tensor(image), torch.tensor(objects,dtype=torch.float32).reshape(-1,5)
 
 
 class ClipClassificationDataset(Dataset):

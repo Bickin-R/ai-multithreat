@@ -37,6 +37,12 @@ def load_checkpoint(model, path, device):
         raise ValueError("Checkpoint class order does not match inference configuration")
     if payload.get("input_size") != [320, 320]:
         raise ValueError("Checkpoint class order or input size does not match inference configuration")
+    expected_architecture = getattr(model, "architecture_id", None)
+    if expected_architecture is not None:
+        if payload.get("architecture_id") != expected_architecture:
+            raise ValueError("Checkpoint architecture_id is missing or incompatible with this Person grid architecture")
+        if payload.get("output_grid") != list(model.output_grid):
+            raise ValueError(f"Checkpoint output_grid must be {list(model.output_grid)}")
     model.load_state_dict(payload["state_dict"])
     model.to(device).eval()
     return True
@@ -45,21 +51,23 @@ def load_checkpoint(model, path, device):
 def decode_grid(output, frame_shape, class_names, threshold=0.5):
     output = output.detach().cpu()[0]
     _, gh, gw = output.shape; h, w = frame_shape[:2]; detections=[]
-    probs = output[0].sigmoid()
-    for iy, ix in (probs >= threshold).nonzero().tolist():
-        cx,cy,bw,bh = output[1:5,iy,ix].sigmoid().tolist()
-        x1=max(0,round((cx-bw/2)*w)); y1=max(0,round((cy-bh/2)*h))
-        x2=min(w,round((cx+bw/2)*w)); y2=min(h,round((cy+bh/2)*h))
-        score=float(probs[iy,ix])
-        class_id = 0
-        if output.shape[0]>5:
-            cls_scores=output[5:,iy,ix].softmax(0); cls=int(cls_scores.argmax()); score*=float(cls_scores[cls])
-            class_id=cls; label=class_names[cls]
-        else: label=class_names[0]
-        if score < threshold or x2 <= x1 or y2 <= y1: continue
-        detections.append({"class":label,"class_id":class_id,"class_name":label,
-                           "confidence":score,"bbox":[x1,y1,x2,y2],
-                           "center":[(x1+x2)//2,(y1+y2)//2]})
+    person_slots = len(class_names) == 1 and output.shape[0] == 10
+    slots = output.reshape(2,5,gh,gw) if person_slots else output.unsqueeze(0)
+    for slot in slots:
+        probs = slot[0].sigmoid()
+        for iy, ix in (probs >= threshold).nonzero().tolist():
+            cx,cy,bw,bh = slot[1:5,iy,ix].sigmoid().tolist()
+            x1=max(0,round((cx-bw/2)*w)); y1=max(0,round((cy-bh/2)*h))
+            x2=min(w,round((cx+bw/2)*w)); y2=min(h,round((cy+bh/2)*h))
+            score=float(probs[iy,ix]); class_id=0
+            if not person_slots and output.shape[0]>5:
+                cls_scores=slot[5:,iy,ix].softmax(0); cls=int(cls_scores.argmax()); score*=float(cls_scores[cls])
+                class_id=cls; label=class_names[cls]
+            else: label=class_names[0]
+            if score < threshold or x2 <= x1 or y2 <= y1: continue
+            detections.append({"class":label,"class_id":class_id,"class_name":label,
+                               "confidence":score,"bbox":[x1,y1,x2,y2],
+                               "center":[(x1+x2)//2,(y1+y2)//2]})
     return non_max_suppression(detections, iou_threshold=0.5)
 
 
