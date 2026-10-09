@@ -1,0 +1,62 @@
+INFERNO PERSON DATA QUALITY AND PROVENANCE AUDIT
+
+Scope: read-only inspection of data/person manifests and image files.
+No source annotation, image, manifest, or split assignment was changed.
+
+MANIFEST / REVIEW STATUS
+- train.jsonl: 64 images, 222 person boxes
+- val.jsonl: 20 images, 95 person boxes
+- test.jsonl: 19 images, 85 person boxes
+- All 103 rows omit the `reviewed` field. Therefore none can be certified as
+  reviewed from the manifests; all 103 are pending human confirmation. This
+  does not prove they were never reviewed outside the manifest.
+- All rows use class 0 and original-image pixel XYXY boxes. The validator found
+  no malformed records, invalid boxes, missing files, path duplicates, or
+  exact-content duplicates. All images are 640x480.
+- `train_backup.jsonl` contains the 103-image union of the current train/val/test
+  manifests (402 boxes) and has no review/source-group fields. It is not an
+  active split in the training CLI; preserve it as a backup and do not train
+  from it. `data/person/online/coco2017` and `coco201` currently contain no
+  files.
+- `source_manifest.json` is absent. Manifest rows contain no source URL, source
+  ID, license, annotation license, source group, or explicit review status.
+
+AVAILABLE CAPTURE METADATA
+- `images/capture_metadata.jsonl` has 20 records, all matching train images
+  person_session_01_000045.jpg through person_session_01_000064.jpg.
+- Those records identify source=webcam, camera index 0, session
+  person_session_01, captured_at timestamps from 2026-10-08T16:04:46Z through
+  2026-10-08T16:13:23Z, frame numbers, 640x480 dimensions, interval, blur and
+  brightness statistics, and previous-frame difference where available.
+- This metadata does not describe the other 83 images. It does not provide a
+  physical camera identity or source file path for the session.
+
+SESSION / SCENE LEAKAGE ASSESSMENT
+- Validation images are named session_01_000001.jpg through
+  session_01_000020.jpg. Test images continue as session_01_000021.jpg through
+  session_01_000039.jpg. This is a sequential filename series split at the
+  validation/test boundary, with no source_group or timestamp evidence to show
+  these are independent captures.
+- Exploratory 64-bit grayscale difference-hash comparison found 11 of 19 test
+  images with a nearest validation image at distance <=6 bits. Examples:
+  test 000021 vs val 000010 (3 bits), test 000022 vs val 000010 (4),
+  test 000026 vs val 000011 (4), test 000035 vs val 000011 (3), and
+  test 000036 vs val 000010 (4). This is a scene/frame similarity signal, not
+  proof of identical frames; exact image hashes found no duplicates.
+- Train filenames use person_session_01; validation/test use session_01.
+  Train and validation/test views show a visually similar room and camera
+  placement. The distinct naming and capture metadata suggest separate named
+  sources, but do not establish distinct physical sessions, people, or scenes.
+- Conclusion: validation/test independence is not established and adjacent
+  frames from one scene are a credible leakage risk. Confirm the collection
+  history with a human before using these splits for model selection claims.
+  Do not use the test split to tune or select future checkpoints.
+
+HUMAN REVIEW QUEUE
+- Review all 103 rows because no row contains review confirmation.
+- `person_review_summary.txt` lists the complete split/image queue.
+- Use `PYTHONPATH=.venv_pkgs python3 -m
+  ai.training.datasets.review_person_annotations --data data/person --split all`
+  to inspect boxes and save review status/flags/notes separately under
+  data/person/reviews/review_results.jsonl. This review file does not alter the
+  source JSONL manifests.

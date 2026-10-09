@@ -29,9 +29,102 @@ channels, and five class logits. Inference returns `class_id`, `class_name`,
 `bbox`, and `confidence`. Existing three-class weapon checkpoints are rejected;
 their class IDs are never remapped automatically.
 
+### Person CNN diagnostic (Inferno)
+
+The selected checkpoint remains `checkpoints/person_augmented.pt`, loaded
+explicitly through `legacy20`. Its recorded held-out test result is limited:
+19 images, 85 annotated people, and at confidence 0.10: 19 predictions, 3 TP,
+16 FP, 82 FN, 15.79% precision, 3.53% recall, AP50 6.42%, and mAP50:0.95
+1.35%. At confidence 0.50 it emits no boxes. These are diagnostic baseline
+measurements, not production-readiness claims. The test set was inspected for
+this baseline diagnosis only; it must not be used to tune future candidates or
+select checkpoints.
+
+Visual review of the 19 test overlays agrees with the counts: most annotated
+people have no prediction, and the few red predicted boxes are often misplaced
+or too large. The historical per-image report records only 3 of 85 people
+matched at IoU >= 0.50; all 16 unmatched predictions fail that match. Mean
+confidence is nearly identical for TP and FP predictions (0.1252 and 0.1260),
+so the current threshold does not separate them. Small-person recall is 0/12;
+medium is 1/36; large is 2/37. Duplicate predictions are not the dominant
+observed failure. These results show poor coverage, weak confidence separation,
+and localization errors; they do not by themselves prove a target or loss bug.
+
+The visualization utility now selects `legacy20` explicitly by default for
+`person_augmented.pt`, and exposes `--architecture legacy20|current40`. It uses
+the shared image preprocessing and decoder, and writes copies of test images
+to the selected debug directory. A mismatched checkpoint must be corrected by
+selecting its architecture; loading does not silently infer it.
+
+Review existing boxes without editing a split manifest:
+
+```bash
+PYTHONPATH=.venv_pkgs python3 -m ai.training.datasets.review_person_annotations \
+  --data data/person --split all
+```
+
+The review UI saves only to `data/person/reviews/review_results.jsonl`. It
+records reviewer confirmation, a UTC timestamp, suspected missing people,
+suspected incorrect boxes, uncertain labels, and notes. To export the current
+review queue without opening a GUI:
+
+```bash
+PYTHONPATH=.venv_pkgs python3 -m ai.training.datasets.review_person_annotations \
+  --data data/person --split all --summary-only \
+  --summary-out debug/person_review_summary.txt
+```
+
+Review results are independent of training labels and do not rewrite source
+annotations. Missing review results mean an image is pending confirmation.
+The current queue has 103 pending and 0 reviewed/flagged items.
+
+The dataset audit found 64/20/19 train/validation/test images and
+222/95/85 person boxes, respectively. The validator reported all 103 records
+valid, with no missing files, invalid boxes, duplicate file contents, or
+path-level split leakage. All images are 640x480, boxes are original-image
+pixel XYXY, and class ID 0 is used throughout. Normalized center/size targets
+and decoded boxes both use whole-image coordinates; grid cells select one of
+two slots without changing that coordinate convention. No same-cell overflow
+above two objects was found in the current manifests. Records use the local
+manual format; imported-source review fields are not present. A
+`source_manifest.json` is absent, and capture metadata covers only a subset of
+images. Validation and test filenames form consecutive ranges from the same
+`session_01` series, and 11/19 test images have a nearest validation image at
+grayscale difference-hash distance <=6 bits. Exact-content hashes found no
+duplicates, but the near-frame evidence indicates likely scene/session
+dependence. The train prefix is `person_session_01`, with capture metadata for
+only images 45–64; train and validation/test also show a similar room and
+camera view. Confirm acquisition history before treating the test score as an
+independent generalization estimate. All 103 manifest rows lack a `reviewed`
+marker, and all three splits contain only positive images (no empty person-free
+frames). Train has 17 small boxes (<1% image area) among 222 people. No
+annotation was changed during this audit.
+
+The training loader resizes RGB images to 320x320 and normalizes box
+coordinates against original dimensions. Horizontal flip and mild brightness
+and contrast variation are enabled only for training. Validation is
+deterministic, evaluated in `eval()` and `no_grad()` mode, and selects the
+checkpoint by minimum validation loss. The test manifest is validated but not
+used for optimization or checkpoint selection. Person objectness uses
+normalized square-root positive weighting; box regression applies only to
+occupied slots. The shared decoder applies sigmoid to objectness and box
+values, scales boxes to the original frame, filters by confidence, then
+applies class-aware NMS at IoU 0.50. Inspection found no confirmed target or
+decoder coordinate mismatch.
+
+No retraining or model/loss/threshold changes were made from this diagnosis.
+Candidate training is not ready until the annotations are reviewed and the
+source-session split is verified or rebuilt under human direction.
+The confirmed software defect was that the visualization command loaded its
+default legacy20 checkpoint as current40; it now uses the explicit legacy
+loader. Future comparisons should optimize on train, select checkpoints on
+validation, and evaluate on test only after selection. The integrated backend
+implementation is not present in this checkout, so backend regression could
+not be rerun here.
+
 ## Dataset preparation
 
-The empty workspace is prepared for real, user-provided data:
+The standard workspace layout for user-provided data is:
 
 ```text
 data/
@@ -47,7 +140,9 @@ Put JPEG or PNG files under the task's `images/` folder; violence uses
 `scene12_clip04_frame000145.jpg`. Keep original source/clip identifiers in
 filenames so you can assign entire sessions to one split. Do not overwrite a
 source image with an augmented copy. Training preprocessing resizes RGB images
-to 320x320 and scales pixel values to [0,1]; there is no automatic augmentation.
+to 320x320 and scales pixel values to [0,1]. Person training additionally
+applies horizontal flips and mild brightness/contrast variation to training
+samples only; validation and test samples are not augmented.
 This workflow never scrapes, downloads, or trains on data automatically.
 
 Create three non-empty JSON Lines manifests per task: `train.jsonl`, `val.jsonl`,

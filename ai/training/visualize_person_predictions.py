@@ -7,10 +7,11 @@ from PIL import Image, ImageDraw
 
 from ai.device import resolve_device
 from ai.inference.common import decode_grid
-from ai.models import PersonDetectorModel
+from ai.models import LegacyPersonDetector20, PersonDetectorModel
 from ai.training.datasets import DetectionDataset, PERSON_CLASSES
 from ai.training.datasets.formats import load_rgb
 from ai.training.train_utils import load_model_checkpoint
+from ai.inference.legacy_person_inference import load_legacy_person_checkpoint
 
 
 def annotate_image(image, ground_truth, predictions):
@@ -30,7 +31,8 @@ def annotate_image(image, ground_truth, predictions):
 
 
 def run_visualization(data="data/person", checkpoint="checkpoints/person_augmented.pt",
-                      device="cuda", confidence=0.1, output="debug/person_predictions"):
+                      device="cuda", confidence=0.1, output="debug/person_predictions",
+                      architecture="legacy20"):
     """Run inference on test.jsonl only and save annotated copies."""
     root = Path(data)
     manifest = root / "test.jsonl"
@@ -41,7 +43,13 @@ def run_visualization(data="data/person", checkpoint="checkpoints/person_augment
         raise ValueError("confidence must be between 0 and 1")
     dataset = DetectionDataset(root, manifest, PERSON_CLASSES, augment=False)
     resolved_device = resolve_device(device)
-    model = load_model_checkpoint(PersonDetectorModel(), checkpoint, resolved_device)
+    if architecture == "legacy20":
+        model = load_legacy_person_checkpoint(
+            LegacyPersonDetector20(), checkpoint, resolved_device)
+    elif architecture == "current40":
+        model = load_model_checkpoint(PersonDetectorModel(), checkpoint, resolved_device)
+    else:
+        raise ValueError("architecture must be 'legacy20' or 'current40'")
     model.eval()
     output = Path(output)
     output.mkdir(parents=True, exist_ok=True)
@@ -84,10 +92,12 @@ def main(argv=None):
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--confidence", type=float, default=0.1)
     parser.add_argument("--output", default="debug/person_predictions")
+    parser.add_argument("--architecture", choices=("legacy20", "current40"), default="legacy20",
+                        help="Explicit model architecture; default matches person_augmented.pt")
     args = parser.parse_args(argv)
     try:
         return run_visualization(args.data, args.checkpoint, args.device,
-                                 args.confidence, args.output)
+                                 args.confidence, args.output, args.architecture)
     except (FileNotFoundError, ValueError, RuntimeError) as exc:
         parser.exit(2, f"Visualization failed: {exc}\n")
 
