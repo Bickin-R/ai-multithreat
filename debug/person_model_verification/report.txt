@@ -1,0 +1,24 @@
+INFERNO PERSON MODEL VERIFICATION
+
+Checkpoint: checkpoints/person_augmented.pt
+Architecture: legacy20
+Interpreter: .venv/bin/python (PyTorch 2.14.1+cu130)
+Evaluation split: data/person/test.jsonl only
+Confidence threshold: 0.10
+
+Evaluation: 19 images; 85 ground-truth people; 19 predictions; 3 TP; 16 FP;
+82 FN; precision 15.79%; recall 3.53%; mean matched IoU 0.6218; AP50 6.42%;
+mAP50:0.95 1.35%.
+
+Visualization: 19 annotated PNGs were generated locally in this directory.
+Representative inspection showed the expected green ground-truth boxes and
+red predictions, with few detections and poor localization. No inference,
+preprocessing, decoder, threshold, architecture, annotation, or checkpoint
+changes were justified by this run. No training was performed.
+
+Checks: dataset pytest suite 75 passed and 2 subtests passed; compileall passed;
+git diff --check passed.
+
+Backend readiness: no backend or app pipeline files are present in this
+checkout, so backend adapter/pipeline tests could not be run. No webcam test
+was run.
